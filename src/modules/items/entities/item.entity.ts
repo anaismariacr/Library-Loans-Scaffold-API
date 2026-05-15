@@ -1,31 +1,37 @@
-import { Loan } from '../../loans/entities/loan.entity';
 import {
-  Entity,
-  PrimaryGeneratedColumn,
   Column,
   CreateDateColumn,
+  Entity,
   Index,
   OneToMany,
+  PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { Loan } from '../../loans/entities/loan.entity';
+
+export enum ItemType {
+  BOOK = 'book',
+  MAGAZINE = 'magazine',
+  EQUIPMENT = 'equipment',
+}
 
 @Entity('items')
 export class Item {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
+  @Index({ unique: true })
+  @Column({ type: 'varchar', length: 32 })
+  code!: string;
+
   @Column({ type: 'varchar', length: 255 })
   title!: string;
 
-  @Column({ type: 'varchar', length: 255 })
-  author!: string;
-
-  @Index({ unique: true })
-  @Column({ type: 'varchar', length: 32 })
-  isbn!: string;
+  @Column({ type: 'enum', enum: ItemType })
+  type!: ItemType;
 
   @Column({ type: 'boolean', default: true })
-  available!: boolean;
+  isActive!: boolean;
 
   @CreateDateColumn()
   createdAt!: Date;

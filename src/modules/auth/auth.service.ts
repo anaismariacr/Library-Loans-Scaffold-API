@@ -63,7 +63,7 @@ export class AuthService {
       throw new ConflictException('Ya existe un usuario con ese email');
     }
 
-    const role = actorRole === UserRole.ADMIN && dto.role ? dto.role : UserRole.OTHER;
+    const role = actorRole === UserRole.ADMIN && dto.role ? dto.role : UserRole.MEMBER;
     const passwordHash = await bcrypt.hash(
       dto.password,
       this.configService.get<number>('bcrypt.saltRounds', 10),

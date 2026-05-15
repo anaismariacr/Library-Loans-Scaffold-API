@@ -20,13 +20,13 @@ export class ItemsService {
   }
 
   create(dto: CreateItemDto) {
-    const item = this.itemRepo.create({ ...dto, isbn: dto.isbn.replaceAll('-', '') });
+    const item = this.itemRepo.create(dto);
     return this.saveItem(item);
   }
 
   async update(id: string, dto: UpdateItemDto) {
     const item = await this.findOne(id);
-    Object.assign(item, dto.isbn ? { ...dto, isbn: dto.isbn.replaceAll('-', '') } : dto);
+    Object.assign(item, dto);
     return this.saveItem(item);
   }
 
@@ -45,7 +45,7 @@ export class ItemsService {
         'code' in error &&
         error.code === '23505'
       ) {
-        throw new ConflictException('Ya existe un item con ese ISBN');
+        throw new ConflictException('Ya existe un item con ese código');
       }
       throw error;
     }

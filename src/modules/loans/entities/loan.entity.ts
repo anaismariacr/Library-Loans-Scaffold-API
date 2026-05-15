@@ -1,10 +1,12 @@
 import {
-  Entity,
-  PrimaryGeneratedColumn,
+  Check,
   Column,
-  ManyToOne,
   CreateDateColumn,
+  Entity,
+  Index,
   JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
 import { User } from '../../auth/entities/user.entity';
@@ -13,29 +15,37 @@ import { Item } from '../../items/entities/item.entity';
 export enum LoanStatus {
   ACTIVE = 'active',
   RETURNED = 'returned',
+  OVERDUE = 'overdue',
+  LOST = 'lost',
 }
 
 @Entity('loans')
+@Check('"dueAt" > "loanedAt"')
+@Index(['itemId', 'status'])
+@Index(['userId', 'status'])
 export class Loan {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  @ManyToOne(() => User, (user) => user.loans, { nullable: false })
-  @JoinColumn({ name: 'userId' })
-  user!: User;
-
   @Column({ type: 'uuid' })
   userId!: string;
-
-  @ManyToOne(() => Item, (item) => item.loans, { nullable: false })
-  @JoinColumn({ name: 'itemId' })
-  item!: Item;
 
   @Column({ type: 'uuid' })
   itemId!: string;
 
-  @Column({ type: 'date' })
-  dueDate!: string;
+  @ManyToOne(() => User, (user) => user.loans, { nullable: false, onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'userId' })
+  user!: User;
+
+  @ManyToOne(() => Item, (item) => item.loans, { nullable: false, onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'itemId' })
+  item!: Item;
+
+  @Column({ type: 'timestamptz' })
+  loanedAt!: Date;
+
+  @Column({ type: 'timestamptz' })
+  dueAt!: Date;
 
   @Column({ type: 'timestamptz', nullable: true })
   returnedAt!: Date | null;
@@ -53,7 +63,7 @@ export class Loan {
       from: (value: string | null) => (value === null ? 0 : Number(value)),
     },
   })
-  fine!: number;
+  fineAmount!: number;
 
   @CreateDateColumn()
   createdAt!: Date;

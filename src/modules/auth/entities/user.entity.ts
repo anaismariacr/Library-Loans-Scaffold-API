@@ -1,18 +1,19 @@
-import { Loan } from '../..//loans/entities/loan.entity';
 import { Exclude } from 'class-transformer';
 import {
-  Entity,
-  PrimaryGeneratedColumn,
   Column,
   CreateDateColumn,
-  OneToMany,
+  Entity,
   Index,
+  OneToMany,
+  PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { Loan } from '../../loans/entities/loan.entity';
 
 export enum UserRole {
   ADMIN = 'admin',
-  OTHER = 'other',
+  LIBRARIAN = 'librarian',
+  MEMBER = 'member',
 }
 
 @Entity({ name: 'users' })
@@ -34,7 +35,7 @@ export class User {
   @Column({ type: 'varchar', length: 100 })
   lastName!: string;
 
-  @Column({ type: 'enum', enum: UserRole, default: UserRole.OTHER })
+  @Column({ type: 'enum', enum: UserRole, default: UserRole.MEMBER })
   role!: UserRole;
 
   @Column({ type: 'boolean', default: true })

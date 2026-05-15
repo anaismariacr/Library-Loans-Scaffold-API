@@ -77,7 +77,12 @@ export class LoansService {
 
     const item = await itemRepo.findOne({ where: { id: dto.itemId } });
     if (!item) throw new NotFoundException(`Item ${dto.itemId} not found`);
-    if (!item.available) throw new BadRequestException('Item is not available');
+    if (!item.isActive) throw new BadRequestException('Item is not active');
+
+    const activeLoanForItem = await loanRepo.findOne({
+      where: { itemId: item.id, status: LoanStatus.ACTIVE },
+    });
+    if (activeLoanForItem) throw new BadRequestException('Item is already loaned');
 
     const maxActiveLoans = this.maxActiveLoans ?? 3;
     const activeLoans = await loanRepo.count({
@@ -88,21 +93,20 @@ export class LoansService {
     }
 
     const maxLoanDays = this.maxLoanDays ?? 30;
-    const dueDate = new Date();
-    dueDate.setDate(dueDate.getDate() + maxLoanDays);
-
-    item.available = false;
-    await itemRepo.save(item);
+    const loanedAt = new Date();
+    const dueAt = new Date(loanedAt);
+    dueAt.setDate(dueAt.getDate() + maxLoanDays);
 
     const loan = loanRepo.create({
       user,
       userId: user.id,
       item,
       itemId: item.id,
-      dueDate: dueDate.toISOString().slice(0, 10),
+      loanedAt,
+      dueAt,
       returnedAt: null,
       status: LoanStatus.ACTIVE,
-      fine: 0,
+      fineAmount: 0,
     });
 
     return loanRepo.save(loan);
@@ -114,7 +118,6 @@ export class LoansService {
     userId?: string,
   ): Promise<Loan> {
     const loanRepo = manager.getRepository(Loan);
-    const itemRepo = manager.getRepository(Item);
     const loan = await loanRepo.findOne({
       where: { id },
       relations: ['item', 'user'],
@@ -129,18 +132,14 @@ export class LoansService {
     }
 
     const returnedAt = new Date();
-    const due = new Date(`${loan.dueDate}T00:00:00.000Z`);
     const daysLate = Math.max(
       0,
-      Math.ceil((returnedAt.getTime() - due.getTime()) / (1000 * 60 * 60 * 24)),
+      Math.ceil((returnedAt.getTime() - loan.dueAt.getTime()) / (1000 * 60 * 60 * 24)),
     );
 
     loan.status = LoanStatus.RETURNED;
     loan.returnedAt = returnedAt;
-    loan.fine = Number((daysLate * (this.dailyFineRate ?? 0.5)).toFixed(2));
-
-    loan.item.available = true;
-    await itemRepo.save(loan.item);
+    loan.fineAmount = Number((daysLate * (this.dailyFineRate ?? 0.5)).toFixed(2));
 
     return loanRepo.save(loan);
   }

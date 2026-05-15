@@ -5,10 +5,12 @@ import { UserRole } from '../entities/user.entity';
 export class RegisterDto {
   @ApiProperty({ example: 'jane.doe@libraryloans.local' })
   @IsEmail()
+  @IsNotEmpty()
   email!: string;
 
   @ApiProperty({ example: 'Strong-Password-123!' })
   @IsString()
+  @IsNotEmpty()
   @MinLength(8)
   password!: string;
 
