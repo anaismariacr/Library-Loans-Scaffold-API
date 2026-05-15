@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { EntityManager, In, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { Loan, LoanStatus } from './entities/loan.entity';
 import { Item } from '../items/entities/item.entity';
@@ -30,7 +30,8 @@ export class LoansService {
     this.maxLoanDays = this.configService.get<number>('loans.maxLoanDays');
   }
 
-  findAll(query: ListLoansQueryDto) {
+  async findAll(query: ListLoansQueryDto) {
+    await this.refreshOverdueLoans();
     return this.loanRepo.find({
       where: {
         ...(query.userId ? { userId: query.userId } : {}),
@@ -43,6 +44,7 @@ export class LoansService {
   }
 
   async findOne(id: string) {
+    await this.refreshOverdueLoans();
     const loan = await this.loanRepo.findOne({
       where: { id },
       relations: ['user', 'item'],
@@ -63,6 +65,21 @@ export class LoansService {
     return this.loanRepo.manager.transaction((manager) => this.markLostInTransaction(manager, id));
   }
 
+  private getOpenStatuses(): LoanStatus[] {
+    return [LoanStatus.ACTIVE, LoanStatus.OVERDUE];
+  }
+
+  private async refreshOverdueLoans(): Promise<void> {
+    await this.loanRepo
+      .createQueryBuilder()
+      .update(Loan)
+      .set({ status: LoanStatus.OVERDUE })
+      .where('status = :status', { status: LoanStatus.ACTIVE })
+      .andWhere('"returnedAt" IS NULL')
+      .andWhere('"dueAt" < :now', { now: new Date() })
+      .execute();
+  }
+
   private async createInTransaction(manager: EntityManager, dto: CreateLoanDto): Promise<Loan> {
     const userRepo = manager.getRepository(User);
     const itemRepo = manager.getRepository(Item);
@@ -80,13 +97,15 @@ export class LoansService {
     if (!item.isActive) throw new ConflictException('Item is not active');
 
     const activeLoanForItem = await loanRepo.findOne({
-      where: { itemId: item.id, status: LoanStatus.ACTIVE },
+      where: { itemId: item.id, status: In(this.getOpenStatuses()) },
     });
-    if (activeLoanForItem) throw new ConflictException('Item is already loaned');
+    if (activeLoanForItem) {
+      throw new ConflictException(`Item is already blocked by loan ${activeLoanForItem.id}`);
+    }
 
     const maxActiveLoans = this.maxActiveLoans ?? 3;
     const activeLoans = await loanRepo.count({
-      where: { userId: dto.userId, status: LoanStatus.ACTIVE },
+      where: { userId: dto.userId, status: In(this.getOpenStatuses()) },
     });
     if (activeLoans >= maxActiveLoans) {
       throw new ConflictException(`User already has ${maxActiveLoans} active loans`);
@@ -99,7 +118,7 @@ export class LoansService {
       throw new BadRequestException('dueAt must be greater than loanedAt');
     }
     if (dueAt > maxDueAt) {
-      throw new ConflictException(`dueAt cannot exceed ${maxLoanDays} days from loanedAt`);
+      throw new BadRequestException(`dueAt cannot exceed ${maxLoanDays} days from loanedAt`);
     }
 
     const loan = loanRepo.create({
@@ -126,10 +145,10 @@ export class LoansService {
 
     if (!loan) throw new NotFoundException(`Loan ${id} not found`);
     if (loan.status === LoanStatus.RETURNED) {
-      throw new ConflictException('Loan is already returned');
+      throw new BadRequestException('Loan is already returned');
     }
     if (loan.status === LoanStatus.LOST) {
-      throw new ConflictException('Lost loans cannot be returned');
+      throw new BadRequestException('Lost loans cannot be returned');
     }
 
     const returnedAt = new Date();
@@ -154,7 +173,10 @@ export class LoansService {
 
     if (!loan) throw new NotFoundException(`Loan ${id} not found`);
     if (loan.status === LoanStatus.RETURNED) {
-      throw new ConflictException('Returned loans cannot be marked as lost');
+      throw new BadRequestException('Returned loans cannot be marked as lost');
+    }
+    if (loan.status === LoanStatus.LOST) {
+      throw new BadRequestException('Loan is already lost');
     }
 
     loan.status = LoanStatus.LOST;

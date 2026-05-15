@@ -112,6 +112,10 @@ El `validationSchema` de Joi exige al arranque:
 
 Si falta alguna requerida o no cumple el formato, la app **falla al arrancar** con un mensaje claro.
 
+## Decisión sobre préstamos vencidos
+
+No hay job/cron para marcar préstamos vencidos. La API materializa la transición `active -> overdue` al consultar préstamos con `GET /loans` o `GET /loans/:id`: antes de responder, actualiza en BD los préstamos con `dueAt < now()`, `status = 'active'` y `returnedAt IS NULL`. Así, `GET /loans?status=overdue` retorna préstamos cuyo estado ya quedó sincronizado como `overdue`.
+
 ## Siguiente paso
 
 Lee el enunciado completo:
