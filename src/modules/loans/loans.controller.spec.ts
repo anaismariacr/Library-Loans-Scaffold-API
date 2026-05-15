@@ -15,6 +15,7 @@ describe('LoansController', () => {
             create: jest.fn(),
             findAll: jest.fn(),
             findOne: jest.fn(),
+            markLost: jest.fn(),
             returnLoan: jest.fn(),
           },
         },

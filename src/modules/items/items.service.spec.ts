@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Item } from './entities/item.entity';
 import { ItemsService } from './items.service';
+import { Loan } from '../loans/entities/loan.entity';
 
 describe('ItemsService', () => {
   let service: ItemsService;
@@ -18,6 +19,13 @@ describe('ItemsService', () => {
             findOneBy: jest.fn(),
             remove: jest.fn(),
             save: jest.fn(),
+          },
+        },
+        {
+          provide: getRepositoryToken(Loan),
+          useValue: {
+            count: jest.fn(),
+            createQueryBuilder: jest.fn(),
           },
         },
       ],

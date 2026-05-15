@@ -1,6 +1,6 @@
 import {
   BadRequestException,
-  ForbiddenException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -11,6 +11,7 @@ import { Loan, LoanStatus } from './entities/loan.entity';
 import { Item } from '../items/entities/item.entity';
 import { User } from '../auth/entities/user.entity';
 import { CreateLoanDto } from './dto/create-loan.dto';
+import { ListLoansQueryDto } from './dto/list-loans-query.dto';
 
 @Injectable()
 export class LoansService {
@@ -29,73 +30,77 @@ export class LoansService {
     this.maxLoanDays = this.configService.get<number>('loans.maxLoanDays');
   }
 
-  findAll(userId?: string) {
+  findAll(query: ListLoansQueryDto) {
     return this.loanRepo.find({
-      where: userId ? { userId } : {},
+      where: {
+        ...(query.userId ? { userId: query.userId } : {}),
+        ...(query.itemId ? { itemId: query.itemId } : {}),
+        ...(query.status ? { status: query.status } : {}),
+      },
       relations: ['user', 'item'],
       order: { createdAt: 'DESC' },
     });
   }
 
-  async findOne(id: string, userId?: string) {
+  async findOne(id: string) {
     const loan = await this.loanRepo.findOne({
       where: { id },
       relations: ['user', 'item'],
     });
     if (!loan) throw new NotFoundException(`Loan ${id} not found`);
-    if (userId && loan.userId !== userId) {
-      throw new ForbiddenException('No puedes consultar préstamos de otro usuario');
-    }
     return loan;
   }
 
-  async create(dto: CreateLoanDto, userId: string) {
-    return this.loanRepo.manager.transaction((manager) =>
-      this.createInTransaction(manager, dto, userId),
-    );
+  async create(dto: CreateLoanDto) {
+    return this.loanRepo.manager.transaction((manager) => this.createInTransaction(manager, dto));
   }
 
-  async returnLoan(id: string, userId?: string) {
-    return this.loanRepo.manager.transaction((manager) =>
-      this.returnInTransaction(manager, id, userId),
-    );
+  async returnLoan(id: string) {
+    return this.loanRepo.manager.transaction((manager) => this.returnInTransaction(manager, id));
   }
 
-  private async createInTransaction(
-    manager: EntityManager,
-    dto: CreateLoanDto,
-    userId: string,
-  ): Promise<Loan> {
+  async markLost(id: string) {
+    return this.loanRepo.manager.transaction((manager) => this.markLostInTransaction(manager, id));
+  }
+
+  private async createInTransaction(manager: EntityManager, dto: CreateLoanDto): Promise<Loan> {
     const userRepo = manager.getRepository(User);
     const itemRepo = manager.getRepository(Item);
     const loanRepo = manager.getRepository(Loan);
+    const loanedAt = new Date();
+    const dueAt = new Date(dto.dueAt);
 
-    const user = await userRepo.findOneBy({ id: userId });
+    const user = await userRepo.findOneBy({ id: dto.userId });
     if (!user || !user.isActive) {
-      throw new NotFoundException(`User ${userId} not found`);
+      throw new NotFoundException(`User ${dto.userId} not found`);
     }
 
     const item = await itemRepo.findOne({ where: { id: dto.itemId } });
     if (!item) throw new NotFoundException(`Item ${dto.itemId} not found`);
-    if (!item.isActive) throw new BadRequestException('Item is not active');
+    if (!item.isActive) throw new ConflictException('Item is not active');
 
     const activeLoanForItem = await loanRepo.findOne({
       where: { itemId: item.id, status: LoanStatus.ACTIVE },
     });
-    if (activeLoanForItem) throw new BadRequestException('Item is already loaned');
+    if (activeLoanForItem) throw new ConflictException('Item is already loaned');
 
     const maxActiveLoans = this.maxActiveLoans ?? 3;
     const activeLoans = await loanRepo.count({
-      where: { userId, status: LoanStatus.ACTIVE },
+      where: { userId: dto.userId, status: LoanStatus.ACTIVE },
     });
     if (activeLoans >= maxActiveLoans) {
-      throw new BadRequestException(`User already has ${maxActiveLoans} active loans`);
+      throw new ConflictException(`User already has ${maxActiveLoans} active loans`);
     }
 
     const maxLoanDays = this.maxLoanDays ?? 30;
-    const loanedAt = new Date();
-    const dueAt = new Date(loanedAt);
-    dueAt.setDate(dueAt.getDate() + maxLoanDays);
+    const maxDueAt = new Date(loanedAt);
+    maxDueAt.setDate(maxDueAt.getDate() + maxLoanDays);
+    if (dueAt <= loanedAt) {
+      throw new BadRequestException('dueAt must be greater than loanedAt');
+    }
+    if (dueAt > maxDueAt) {
+      throw new ConflictException(`dueAt cannot exceed ${maxLoanDays} days from loanedAt`);
+    }
 
     const loan = loanRepo.create({
       user,
@@ -112,11 +117,7 @@ export class LoansService {
     return loanRepo.save(loan);
   }
 
-  private async returnInTransaction(
-    manager: EntityManager,
-    id: string,
-    userId?: string,
-  ): Promise<Loan> {
+  private async returnInTransaction(manager: EntityManager, id: string): Promise<Loan> {
     const loanRepo = manager.getRepository(Loan);
     const loan = await loanRepo.findOne({
       where: { id },
@@ -124,11 +125,11 @@ export class LoansService {
     });
 
     if (!loan) throw new NotFoundException(`Loan ${id} not found`);
-    if (userId && loan.userId !== userId) {
-      throw new ForbiddenException('No puedes devolver préstamos de otro usuario');
-    }
     if (loan.status === LoanStatus.RETURNED) {
-      throw new BadRequestException('Loan is already returned');
+      throw new ConflictException('Loan is already returned');
+    }
+    if (loan.status === LoanStatus.LOST) {
+      throw new ConflictException('Lost loans cannot be returned');
     }
 
     const returnedAt = new Date();
@@ -141,6 +142,22 @@ export class LoansService {
     loan.returnedAt = returnedAt;
     loan.fineAmount = Number((daysLate * (this.dailyFineRate ?? 0.5)).toFixed(2));
 
+    return loanRepo.save(loan);
+  }
+
+  private async markLostInTransaction(manager: EntityManager, id: string): Promise<Loan> {
+    const loanRepo = manager.getRepository(Loan);
+    const loan = await loanRepo.findOne({
+      where: { id },
+      relations: ['item', 'user'],
+    });
+
+    if (!loan) throw new NotFoundException(`Loan ${id} not found`);
+    if (loan.status === LoanStatus.RETURNED) {
+      throw new ConflictException('Returned loans cannot be marked as lost');
+    }
+
+    loan.status = LoanStatus.LOST;
     return loanRepo.save(loan);
   }
 }
